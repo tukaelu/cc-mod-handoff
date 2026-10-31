@@ -162,6 +162,7 @@ test('the band offers the handoff and switching clears then sends it', async ($,
   const svg = await ui.find({ type: 'Svg' })
   expect(svg?.props.alt).toBe('Note saved · 67 chars')
   expect(String(svg?.props.source)).toContain('Stored at')
+  expect(String(svg?.props.source)).not.toMatch(/="[^"]*"[^\s>/]/) // every attribute value ends cleanly
   expect((await ui.findAll({ type: 'Button' })).length).toBe(4)
   await ui.press({ key: 'switch' } as any)
   await clock.settle()
@@ -309,4 +310,33 @@ test('a long heading is clipped before the reason chip', async ($, on) => {
   expect(heading.startsWith("Couldn't write the note")).toBe(true)
   expect(heading.endsWith('…')).toBe(true)
   expect(heading.length).toBeLessThan(80)
+})
+
+test('a narrow desktop band drops the path line; other surfaces keep the narrower width', async ($, on) => {
+  const { clock } = setup(on, [NOTE], { percent: 85 })
+  await endTurn($)
+  await clock.settle()
+  const narrow = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: 60 }, surface: 'desktop' } as any)
+  expect(String((await narrow.find({ type: 'Svg' }))?.props.source)).not.toContain('Stored at')
+  await narrow.unmount()
+  const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' } as any)
+  expect((await desktop.find({ type: 'Svg' }))?.props.width).toBe(696)
+  await desktop.unmount()
+  const vscode = await $.ui.mount({ ...BAND, surface: 'vscode' } as any)
+  expect((await vscode.find({ type: 'Svg' }))?.props.width).toBe(608)
+  await vscode.unmount()
+})
+
+test('while waiting the band spins and shows no buttons', async ($, on) => {
+  const { clock } = setup(on, [NOTE], { busyAgents: () => true })
+  await $.ui.mount({ ...BAND, surface: 'desktop' } as any).then(ui => ui.press({ key: 'handoff' } as any))
+  await clock.settle()
+  for (const surface of ['desktop', 'terminal'] as const) {
+    const ui = await $.ui.mount({ ...BAND, surface } as any)
+    expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
+    if (surface === 'desktop') expect(String((await ui.find({ type: 'Svg' }))?.props.source)).toContain('animateTransform')
+    if (surface === 'desktop') expect(String((await ui.find({ type: 'Svg' }))?.props.source)).not.toMatch(/="[^"]*"[^\s>/]/)
+    if (surface === 'terminal') expect((await ui.findAll({ type: 'Box' })).filter(b => b.props.marginTop === 1)).toHaveLength(0)
+    await ui.unmount()
+  }
 })

@@ -75,9 +75,14 @@ const tick = async ($: EngineInterface, s: Settings) => {
     await keep($, s)
   } catch (err) {
     const c = await read($, cycle)
-    if (c === null || (c.phase !== 'idle' && c.phase !== 'keeping')) return
-    if (!c.isRetry) return idleFrom($, s, c, RETRY_MS, true)
-    await save($, { ...c, phase: 'stopped', note: `keep-alive failed: ${String(err)}` })
+    if (c === null) return
+    if (c.phase === 'idle' || c.phase === 'keeping') {
+      if (!c.isRetry) return idleFrom($, s, c, RETRY_MS, true)
+      return save($, { ...c, phase: 'stopped', note: `keep-alive failed: ${String(err)}` })
+    }
+    // The away handoff broke before its note existed: say so instead of waiting forever.
+    const isLost = c.phase === 'due' || (c.phase === 'held' && (await read($, handoff)) === null)
+    if (isLost) await save($, { ...c, phase: 'stopped', note: `could not start the handoff: ${String(err)}` })
   }
 }
 
@@ -307,7 +312,7 @@ const statusOf = (c: Cycle | null, s: Settings): { text: string; tone: string } 
 const headingOf = (note: Handoff) => {
   const stale = note.isStale ? ' (conversation moved on)' : ''
   if (note.status === 'waiting') return 'Waiting for running agents to finish'
-  if (note.status === 'generating') return `Drafting a handoff note…${stale}`
+  if (note.status === 'generating') return `Drafting a handoff note${stale}…`
   if (note.status === 'failed') return `Couldn't write the note: ${note.error}`
   return `Note saved · ${note.text.length.toLocaleString('en-US')} chars${stale}`
 }
@@ -335,10 +340,14 @@ const noteSvg = (note: Handoff, width: number) => {
 
   const parts: string[] = []
   let y = SVG_PAD + 10
+  // Waiting has no steps yet: the heading carries the only sign of life.
+  const isWaiting = note.status === 'waiting'
+  const headX = isWaiting ? SVG_PAD + 24 : SVG_PAD
+  if (isWaiting) parts.push(icon(SVG_PAD + 8, y, 'busy'))
   const chip = note.reasons.map(r => REASON[r]).join(' · ')
   const chipW = Math.round(chip.length * 6.5) + 18
-  const headingChars = Math.floor((right - chipW - 8 - SVG_PAD) / 8)
-  parts.push(`<text x="${SVG_PAD}" y="${y + 5}" fill="${tone}" font-size="14" font-weight="700">${xml(clip(headingOf(note), headingChars))}</text>`)
+  const headingChars = Math.floor((right - chipW - 8 - headX) / 8)
+  parts.push(`<text x="${headX}" y="${y + 5}" fill="${tone}" font-size="14" font-weight="700">${xml(clip(headingOf(note), headingChars))}</text>`)
   parts.push(`<rect class="chip" x="${right - chipW}" y="${y - 10}" width="${chipW}" height="20" rx="10"/><text class="m" x="${right - chipW / 2}" y="${y + 4}" text-anchor="middle" font-size="11">${xml(chip)}</text>`)
 
   if (note.steps.length > 0) {
@@ -356,7 +365,8 @@ const noteSvg = (note: Handoff, width: number) => {
     y += 8
   }
 
-  if (note.status === 'ready') {
+  // Below about 600 px the four buttons wrap to two rows: drop the path line to stay within the band's height.
+  if (note.status === 'ready' && width >= 600) {
     y += 8
     parts.push(`<line class="rule" x1="${SVG_PAD}" y1="${y}" x2="${right}" y2="${y}"/>`)
     y += 20
@@ -513,8 +523,10 @@ export const register: Register = (on, options) => {
       )
       if (e.surface !== 'terminal' && 'Svg' in ui) {
         const { Svg } = ui
-        // Measured on desktop: 85 columns span a band about 768 px wide, so about 9 px a column.
-        const width = Math.max(320, Math.min(960, (e.props.bodyColumns || 80) * 9 - 24))
+        // Measured on desktop only: 85 columns span a band about 768 px wide, so about 9 px a column.
+        // Other surfaces keep the narrower guess until measured.
+        const cols = e.props.bodyColumns || 80
+        const width = Math.max(320, e.surface === 'desktop' ? Math.min(960, cols * 9 - 24) : Math.min(640, cols * 8 - 32))
         const drawn = noteSvg(note, width)
         return (
           <Box flexDirection="column" gap={1}>
@@ -545,7 +557,7 @@ export const register: Register = (on, options) => {
             )
           })}
           {note.status === 'ready' ? <Text dimColor wrap="truncate-middle">Stored at {note.path}</Text> : null}
-          <Box marginTop={1}>{buttons}</Box>
+          {isBusy ? null : <Box marginTop={1}>{buttons}</Box>}
         </Box>
       )
     }
