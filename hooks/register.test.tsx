@@ -154,14 +154,14 @@ test('the band offers the handoff and switching clears then sends it', async ($,
   await endTurn($)
   await clock.settle()
   const terminal = await $.ui.mount({ ...BAND, surface: 'terminal' } as any)
-  expect((await terminal.find({ type: 'Text', text: /Handoff ready/ }))?.text).toBe('Handoff ready: 67 chars')
+  expect((await terminal.find({ type: 'Text', text: /Note saved/ }))?.text).toBe('Note saved · 67 chars')
   await terminal.unmount()
 
   // desktop draws the band as one SVG; its alt carries the heading
   const ui = await $.ui.mount({ ...BAND, surface: 'desktop' } as any)
   const svg = await ui.find({ type: 'Svg' })
-  expect(svg?.props.alt).toBe('Handoff ready: 67 chars')
-  expect(String(svg?.props.source)).toContain('Saved to')
+  expect(svg?.props.alt).toBe('Note saved · 67 chars')
+  expect(String(svg?.props.source)).toContain('Stored at')
   expect((await ui.findAll({ type: 'Button' })).length).toBe(4)
   await ui.press({ key: 'switch' } as any)
   await clock.settle()
@@ -217,7 +217,7 @@ test('the elapsed-time ticker never undoes a finished step', async ($, on) => {
   await clock.advance(10_000) // the fork answers as the ticker fires
   await clock.settle()
   expect(handoff().status).toBe('ready')
-  expect(handoff().steps[3]).toEqual({ label: 'Writing the handoff', result: '10s', isDone: true })
+  expect(handoff().steps[3]).toEqual({ label: 'Summarizing with the model', result: '10s', isDone: true })
 })
 
 test('a reload checks the thresholds again', async ($, on) => {
@@ -306,7 +306,7 @@ test('a long heading is clipped before the reason chip', async ($, on) => {
   await clock.settle()
   const svg = await ui.find({ type: 'Svg' })
   const heading = String(svg?.props.source).match(/font-weight="700">([^<]*)</)?.[1] ?? ''
-  expect(heading.startsWith('Handoff failed')).toBe(true)
+  expect(heading.startsWith("Couldn't write the note")).toBe(true)
   expect(heading.endsWith('…')).toBe(true)
   expect(heading.length).toBeLessThan(80)
 })

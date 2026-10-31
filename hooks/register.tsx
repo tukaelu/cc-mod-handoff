@@ -149,11 +149,11 @@ const URL_RE = /https?:\/\/[^\s)>\]"'`]+/g
 
 const generate = async ($: EngineInterface) => {
   const steps: Step[] = [
-    { label: 'Reading the conversation', result: '', isDone: false },
-    { label: 'Finding the files you used', result: '', isDone: false },
-    { label: 'Listing skills, tools and links', result: '', isDone: false },
-    { label: 'Writing the handoff', result: '', isDone: false },
-    { label: 'Saving and checking', result: '', isDone: false },
+    { label: 'Scanning messages', result: '', isDone: false },
+    { label: 'Collecting files used in this chat', result: '', isDone: false },
+    { label: 'Gathering skills, tools & URLs', result: '', isDone: false },
+    { label: 'Summarizing with the model', result: '', isDone: false },
+    { label: 'Writing to disk & verifying', result: '', isDone: false },
   ]
   const done = async (i: number, result: string) => {
     steps[i] = { ...steps[i], result, isDone: true }
@@ -306,10 +306,10 @@ const statusOf = (c: Cycle | null, s: Settings): { text: string; tone: string } 
 
 const headingOf = (note: Handoff) => {
   const stale = note.isStale ? ' (conversation moved on)' : ''
-  if (note.status === 'waiting') return 'Handoff: waiting for running work to finish'
-  if (note.status === 'generating') return `Preparing handoff${stale}`
-  if (note.status === 'failed') return `Handoff failed: ${note.error}`
-  return `Handoff ready: ${note.text.length.toLocaleString('en-US')} chars${stale}`
+  if (note.status === 'waiting') return 'Waiting for running agents to finish'
+  if (note.status === 'generating') return `Drafting a handoff note…${stale}`
+  if (note.status === 'failed') return `Couldn't write the note: ${note.error}`
+  return `Note saved · ${note.text.length.toLocaleString('en-US')} chars${stale}`
 }
 
 const FONT = "-apple-system,BlinkMacSystemFont,'SF Pro Text','Hiragino Sans','Segoe UI',sans-serif"
@@ -360,7 +360,7 @@ const noteSvg = (note: Handoff, width: number) => {
     y += 8
     parts.push(`<line class="rule" x1="${SVG_PAD}" y1="${y}" x2="${right}" y2="${y}"/>`)
     y += 20
-    parts.push(`<text class="m" x="${SVG_PAD}" y="${y}" font-size="12">${xml(clip(`Saved to ${note.path}`, Math.floor((right - SVG_PAD) / 7)))}</text>`)
+    parts.push(`<text class="m" x="${SVG_PAD}" y="${y}" font-size="12">${xml(clip(`Stored at ${note.path}`, Math.floor((right - SVG_PAD) / 7)))}</text>`)
   }
   const height = y + SVG_PAD - 4
 
@@ -504,11 +504,11 @@ export const register: Register = (on, options) => {
       const isBusy = note.status === 'waiting' || note.status === 'generating'
       const buttons = (
         <Box gap={1}>
-          {note.status === 'ready' ? <Button key="switch" variant="primary" label="Start new chat with it" onPress={() => void $.clock.after(0, () => void switchSession($))} /> : null}
-          {note.status === 'ready' ? <Button key="copy" variant="secondary" label="Copy handoff prompt" onPress={() => $.ui.copy({ text: `Read ${note.path} and resume the work it describes.` })} /> : null}
-          {note.status === 'ready' ? <Button key="open" variant="secondary" label="Open file" onPress={() => openFile($, note.path)} /> : null}
+          {note.status === 'ready' ? <Button key="switch" variant="primary" label="Resume in a fresh chat" onPress={() => void $.clock.after(0, () => void switchSession($))} /> : null}
+          {note.status === 'ready' ? <Button key="copy" variant="secondary" label="Copy resume prompt" onPress={() => $.ui.copy({ text: `Read ${note.path} and resume the work it describes.` })} /> : null}
+          {note.status === 'ready' ? <Button key="open" variant="secondary" label="View note" onPress={() => openFile($, note.path)} /> : null}
           {note.status === 'failed' ? <Button key="retry" variant="primary" label="Try again" onPress={() => requestHandoff($, ['manual'])} /> : null}
-          {isBusy ? null : <Button key="close" variant="secondary" label="Close" onPress={() => closeHandoff($, s)} />}
+          {isBusy ? null : <Button key="close" variant="secondary" label="Keep going here" onPress={() => closeHandoff($, s)} />}
         </Box>
       )
       if (e.surface !== 'terminal' && 'Svg' in ui) {
@@ -536,7 +536,7 @@ export const register: Register = (on, options) => {
                 <Box width={2} flexShrink={0} justifyContent="center">
                   <Text color={color}>{step.isDone ? '✓' : isCurrent ? '▸' : '·'}</Text>
                 </Box>
-                <Box width={33} flexShrink={0}>
+                <Box width={38} flexShrink={0}>
                   <Text dimColor={!step.isDone && !isCurrent} wrap="truncate-end">{i + 1}. {step.label}</Text>
                 </Box>
                 {bar(`bar-${i}`, step.isDone ? 1 : isCurrent ? 0.5 : 0, color, BAR, BAR_PX)}
@@ -544,7 +544,7 @@ export const register: Register = (on, options) => {
               </Box>
             )
           })}
-          {note.status === 'ready' ? <Text dimColor wrap="truncate-middle">Saved to {note.path}</Text> : null}
+          {note.status === 'ready' ? <Text dimColor wrap="truncate-middle">Stored at {note.path}</Text> : null}
           <Box marginTop={1}>{buttons}</Box>
         </Box>
       )
