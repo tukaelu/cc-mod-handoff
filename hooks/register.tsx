@@ -327,29 +327,22 @@ const noteSvg = (note: Handoff, width: number) => {
   const current = note.steps.findIndex(step => !step.isDone)
   const right = width - SVG_PAD
 
-  const icon = (x: number, y: number, kind: 'done' | 'busy' | 'todo' | 'failed') => {
+  const icon = (x: number, y: number, kind: 'done' | 'busy' | 'todo') => {
     if (kind === 'done') return `<circle cx="${x}" cy="${y}" r="8" fill="${TONE.success}"/><path d="M${x - 3.5} ${y}l2.5 2.5 4.5-5" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`
-    if (kind === 'failed') return `<circle cx="${x}" cy="${y}" r="8" fill="${TONE.error}"/><path d="M${x - 3} ${y - 3}l6 6m0-6l-6 6" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>`
     if (kind === 'busy') return `<circle class="k" cx="${x}" cy="${y}" r="7" fill="none" stroke-width="2"/><circle cx="${x}" cy="${y}" r="7" fill="none" stroke="${TONE.warning}" stroke-width="2" stroke-linecap="round" stroke-dasharray="14 30"><animateTransform attributeName="transform" type="rotate" from="0 ${x} ${y}" to="360 ${x} ${y}" dur="0.9s" repeatCount="indefinite"/></circle>`
     return `<circle class="k" cx="${x}" cy="${y}" r="7" fill="none" stroke-width="1.5"/>`
   }
 
   const parts: string[] = []
   let y = SVG_PAD + 10
-  parts.push(icon(SVG_PAD + 8, y, note.status === 'ready' ? 'done' : note.status === 'failed' ? 'failed' : 'busy'))
   const chip = note.reasons.map(r => REASON[r]).join(' · ')
   const chipW = Math.round(chip.length * 6.5) + 18
-  const headingChars = Math.floor((right - chipW - 8 - (SVG_PAD + 24)) / 8)
-  parts.push(`<text x="${SVG_PAD + 24}" y="${y + 5}" fill="${tone}" font-size="14" font-weight="700">${xml(clip(headingOf(note), headingChars))}</text>`)
+  const headingChars = Math.floor((right - chipW - 8 - SVG_PAD) / 8)
+  parts.push(`<text x="${SVG_PAD}" y="${y + 5}" fill="${tone}" font-size="14" font-weight="700">${xml(clip(headingOf(note), headingChars))}</text>`)
   parts.push(`<rect class="chip" x="${right - chipW}" y="${y - 10}" width="${chipW}" height="20" rx="10"/><text class="m" x="${right - chipW / 2}" y="${y + 4}" text-anchor="middle" font-size="11">${xml(chip)}</text>`)
 
   if (note.steps.length > 0) {
-    y += 22
-    const ratio = note.steps.filter(step => step.isDone).length / note.steps.length
-    const barW = right - SVG_PAD
-    parts.push(`<rect class="k" x="${SVG_PAD}" y="${y}" width="${barW}" height="4" rx="2"/>`)
-    if (ratio > 0) parts.push(`<rect x="${SVG_PAD}" y="${y}" width="${Math.max(4, Math.round(barW * ratio))}" height="4" rx="2" fill="${tone}"/>`)
-    y += 10
+    y += 12
     note.steps.forEach((step, i) => {
       const cy = y + SVG_ROW / 2 + 2
       const kind = step.isDone ? 'done' : note.status === 'generating' && i === current ? 'busy' : 'todo'
@@ -520,12 +513,13 @@ export const register: Register = (on, options) => {
       )
       if (e.surface !== 'terminal' && 'Svg' in ui) {
         const { Svg } = ui
-        const width = Math.max(320, Math.min(640, (e.props.bodyColumns || 80) * 8 - 32))
+        // Measured on desktop: 85 columns span a band about 768 px wide, so about 9 px a column.
+        const width = Math.max(320, Math.min(960, (e.props.bodyColumns || 80) * 9 - 24))
         const drawn = noteSvg(note, width)
         return (
           <Box flexDirection="column" gap={1}>
             <Svg key="note" source={drawn.source} alt={headingOf(note)} width={width} height={drawn.height} isInteractive={isBusy ? true : undefined} />
-            {buttons}
+            {isBusy ? null : buttons}
           </Box>
         )
       }
