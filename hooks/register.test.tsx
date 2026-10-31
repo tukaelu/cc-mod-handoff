@@ -20,7 +20,7 @@ const BAND = {
   props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 80, scroll: { offset: 0, bodyRows: 20 }, view: {} },
 } as const
 
-const setup = (on: any, forks: unknown[], o: { rateLimits?: unknown[]; percent?: number; busyAgents?: () => boolean; forkDelayMs?: number; stale?: Record<string, unknown>; messages?: unknown[] } = {}) => {
+const setup = (on: any, forks: unknown[], o: { rateLimits?: unknown[]; percent?: number; busyAgents?: () => boolean; agentListFails?: boolean; clearDelayMs?: number; forkDelayMs?: number; stale?: Record<string, unknown>; messages?: unknown[] } = {}) => {
   const clock = mock.clock(on)
   mock.env(on, { HOME: '/home/u' })
   let forkCalls = 0
@@ -35,23 +35,32 @@ const setup = (on: any, forks: unknown[], o: { rateLimits?: unknown[]; percent?:
   on('model.fork', async () => {
     const answer = forks[Math.min(forkCalls++, forks.length - 1)]
     if (o.forkDelayMs) await clock.sleep(o.forkDelayMs)
+    if (answer instanceof Error) throw answer
     return { value: answer }
   })
   on('turn.start', (_: unknown, e: { turnId: string }) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: 'done' }))
   on('ui.toast', () => ({ value: undefined }))
-  on('agent.list', () => ({ value: o.busyAgents?.() ? [{ id: 'a', status: 'running' }] : [] }))
+  on('agent.list', () => {
+    if (o.agentListFails) throw new Error('agent.list failed')
+    return { value: o.busyAgents?.() ? [{ id: 'a', status: 'running' }] : [] }
+  })
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   // What an earlier load left in $.state, read until this load writes the key.
   on('state.get', ($: unknown, e: { key: string }, next: (e: unknown) => unknown) =>
     o.stale && e.key in o.stale && !(e.key in saved) ? { value: { value: o.stale[e.key], version: 1 } } : next(e))
   on('classic.SessionStart', () => ({}))
+  on('session.end', (_: unknown, e: { sessionId: string }) => ({ sessionId: e.sessionId }))
   on('session.messages', () => ({ value: o.messages ?? MESSAGES }))
   on('session.cwd', () => ({ value: '/repo/my-project' }))
   on('fs.write', (_: unknown, e: { path: string; text: string }) => ((files[e.path] = e.text), { value: undefined }))
   on('fs.read', (_: unknown, e: { path: string }) => ({ value: files[e.path] }))
   on('fs.exists', (_: unknown, e: { path: string }) => ({ value: e.path in files }))
-  on('command.run', (_: unknown, e: { command: string }) => (calls.push(`/${e.command}`), { value: {} }))
+  on('command.run', async (_: unknown, e: { command: string }) => {
+    calls.push(`/${e.command}`)
+    if (o.clearDelayMs) await clock.sleep(o.clearDelayMs)
+    return { value: {} }
+  })
   on('prompt.submit', (_: unknown, e: { text: string }) => (calls.push(`submit:${e.text}`), { text: e.text }))
   return { clock, forks: () => forkCalls, cycle: () => saved.cycle, handoff: () => saved.handoff, files, calls }
 }
@@ -233,4 +242,71 @@ test('search directories are not counted as files', async ($, on) => {
   await ui.press({ key: 'handoff' } as any)
   await clock.settle()
   expect(handoff().steps[1].result).toBe('0 files')
+})
+
+test('a thrown keep-alive retries once, then stops', async ($, on) => {
+  const { clock, forks, cycle } = setup(on, [new Error('boom')])
+  await endTurn($)
+  await clock.advance(50 * MIN)
+  expect(cycle().phase).toBe('idle')
+  expect(cycle().isRetry).toBe(true)
+  await clock.advance(5 * MIN)
+  expect(forks()).toBe(2)
+  expect(cycle().phase).toBe('stopped')
+  expect(cycle().note).toContain('keep-alive failed')
+})
+
+test('a failed agent lookup still generates the handoff', async ($, on) => {
+  const { clock, handoff } = setup(on, [NOTE], { agentListFails: true })
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' } as any)
+  await ui.press({ key: 'handoff' } as any)
+  await clock.settle()
+  expect(handoff().status).toBe('ready')
+})
+
+test('a double press of switch clears only once', async ($, on) => {
+  const { clock, calls } = setup(on, [NOTE], { percent: 85, clearDelayMs: 1_000 })
+  await endTurn($)
+  await clock.settle()
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' } as any)
+  await ui.press({ key: 'switch' } as any)
+  await clock.advance(500) // the first /clear is still running
+  await ui.press({ key: 'switch' } as any)
+  await clock.advance(2_000)
+  await clock.settle()
+  expect(calls.filter(c => c === '/clear')).toHaveLength(1)
+})
+
+test('a /clear starts the next conversation without the old handoff', async ($, on) => {
+  const { clock, cycle, handoff } = setup(on, [NOTE], { percent: 85 })
+  await endTurn($)
+  await clock.settle()
+  expect(handoff().status).toBe('ready')
+  await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } } as any)
+  expect(handoff()).toBeNull()
+  expect(cycle()).toBeNull()
+})
+
+test('closing a manual handoff past the threshold holds the automatic one', async ($, on) => {
+  const { clock, forks } = setup(on, [NOTE], { percent: 85 })
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' } as any)
+  await ui.press({ key: 'handoff' } as any)
+  await clock.settle()
+  await ui.press({ key: 'close' } as any)
+  await ui.unmount()
+  await endTurn($)
+  await clock.settle()
+  expect(forks()).toBe(1)
+})
+
+test('a long heading is clipped before the reason chip', async ($, on) => {
+  const { clock } = setup(on, [{ isAnswered: false, reason: 'x'.repeat(200), usage: usage({ cache_read_input_tokens: 0 }) }])
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' } as any)
+  await ui.press({ key: 'handoff' } as any)
+  await clock.settle()
+  const svg = await ui.find({ type: 'Svg' })
+  const heading = String(svg?.props.source).match(/font-weight="700">([^<]*)</)?.[1] ?? ''
+  expect(heading.startsWith('Handoff failed')).toBe(true)
+  expect(heading.endsWith('…')).toBe(true)
+  expect(heading.length).toBeLessThan(80)
 })

@@ -39,6 +39,7 @@ type Settings = { isOn: boolean; count: number; intervalMs: number; usageStop: n
 
 let timer: Timer | undefined
 let agentTimer: Timer | undefined
+let isSwitching = false
 
 const pad = (n: number) => String(n).padStart(2, '0')
 const hhmm = (ms: number) => {
@@ -68,8 +69,20 @@ const idleFrom = async ($: EngineInterface, s: Settings, c: Cycle, waitMs: numbe
   await schedule($, s, next)
 }
 
-// One keep-alive step (1.1-1.5, 1.8); after N keeps, the handoff for being away (3.1).
+// A thrown step is a failed keep: retry once, then stop.
 const tick = async ($: EngineInterface, s: Settings) => {
+  try {
+    await keep($, s)
+  } catch (err) {
+    const c = await read($, cycle)
+    if (c === null || (c.phase !== 'idle' && c.phase !== 'keeping')) return
+    if (!c.isRetry) return idleFrom($, s, c, RETRY_MS, true)
+    await save($, { ...c, phase: 'stopped', note: `keep-alive failed: ${String(err)}` })
+  }
+}
+
+// One keep-alive step (1.1-1.5, 1.8); after N keeps, the handoff for being away (3.1).
+const keep = async ($: EngineInterface, s: Settings) => {
   const c = await read($, cycle)
   if (c === null || c.phase !== 'idle') return
   if (c.kept >= s.count) {
@@ -114,7 +127,8 @@ const waitForAgents = async ($: EngineInterface) => {
   agentTimer?.cancel()
   const note = await read($, handoff)
   if (note === null || note.status !== 'waiting') return
-  const isBusy = (await $.agent.list()).some(a => a.status === 'running' || a.status === 'pending')
+  // A failed lookup must not leave the band stuck in 'waiting', which has no Close.
+  const isBusy = (await $.agent.list().catch(() => [])).some(a => a.status === 'running' || a.status === 'pending')
   if (isBusy) {
     agentTimer = $.clock.after(AGENT_POLL_MS, () => void waitForAgents($))
     return
@@ -226,26 +240,35 @@ ${list(links)}`
 }
 
 // 4.1: regenerate when stale, check the file, /clear, then send the handoff.
+// A second press must not /clear the conversation the first one started.
 const switchSession = async ($: EngineInterface) => {
-  let note = await read($, handoff)
-  if (note === null) return
-  if (note.isStale) {
-    await generate($)
-    note = await read($, handoff)
-    if (note === null || note.status !== 'ready') return
+  if (isSwitching) return
+  isSwitching = true
+  try {
+    let note = await read($, handoff)
+    if (note === null) return
+    if (note.isStale) {
+      await generate($)
+      note = await read($, handoff)
+      if (note === null || note.status !== 'ready') return
+    }
+    if (!(await $.fs.exists(note.path))) return patch($, { status: 'failed', error: `handoff file not found: ${note.path}` })
+    const text = note.text
+    await $.command.run({ command: 'clear' })
+    await $.prompt.submit({ text, asUser: true })
+  } finally {
+    isSwitching = false
   }
-  if (!(await $.fs.exists(note.path))) return patch($, { status: 'failed', error: `handoff file not found: ${note.path}` })
-  const text = note.text
-  await $.command.run({ command: 'clear' })
-  await $.prompt.submit({ text, asUser: true })
 }
 
 // 5: continue this session.
-const closeHandoff = async ($: EngineInterface) => {
+const closeHandoff = async ($: EngineInterface, s: Settings) => {
   const note = await read($, handoff)
   if (note === null) return
   await patch($, { isShown: false })
-  if (note.reasons.includes('usage')) await update($, isUsageHeld, () => true)
+  // Closing any handoff past the threshold holds the automatic one, not only a 'usage' one.
+  const percent = (await $.session.usage()).context.percent
+  if (note.reasons.includes('usage') || (percent !== undefined && percent > s.autoGen)) await update($, isUsageHeld, () => true)
   await hold($) // the cycle starts again at the next real turn's end
 }
 
@@ -260,7 +283,7 @@ const checkThresholds = async ($: EngineInterface, s: Settings) => {
     const compact = Math.floor((limit / context.window) * 100)
     if (s.autoGen >= compact) problems.push(`auto-handoff (${s.autoGen}%) is not below auto-compact (${compact}%)`)
   }
-  await update($, configWarning, () => problems.join('、'))
+  await update($, configWarning, () => problems.join('; '))
 }
 
 const openFile = async ($: EngineInterface, path: string) => {
@@ -314,9 +337,10 @@ const noteSvg = (note: Handoff, width: number) => {
   const parts: string[] = []
   let y = SVG_PAD + 10
   parts.push(icon(SVG_PAD + 8, y, note.status === 'ready' ? 'done' : note.status === 'failed' ? 'failed' : 'busy'))
-  parts.push(`<text x="${SVG_PAD + 24}" y="${y + 5}" fill="${tone}" font-size="14" font-weight="700">${xml(headingOf(note))}</text>`)
   const chip = note.reasons.map(r => REASON[r]).join(' · ')
   const chipW = Math.round(chip.length * 6.5) + 18
+  const headingChars = Math.floor((right - chipW - 8 - (SVG_PAD + 24)) / 8)
+  parts.push(`<text x="${SVG_PAD + 24}" y="${y + 5}" fill="${tone}" font-size="14" font-weight="700">${xml(clip(headingOf(note), headingChars))}</text>`)
   parts.push(`<rect class="chip" x="${right - chipW}" y="${y - 10}" width="${chipW}" height="20" rx="10"/><text class="m" x="${right - chipW / 2}" y="${y + 4}" text-anchor="middle" font-size="11">${xml(chip)}</text>`)
 
   if (note.steps.length > 0) {
@@ -385,11 +409,20 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('session.end', ($, e, next) => {
+  // A /clear or resume goes on in this process with no session.start: start the next conversation clean.
+  on('session.end', async ($, e, next) => {
     timer?.cancel()
     agentTimer?.cancel()
+    await Promise.all([
+      update($, cycle, () => null),
+      update($, handoff, () => null),
+      update($, isWarned, () => false),
+      update($, isUsageHeld, () => false),
+      update($, configWarning, () => null),
+      update($, lastTurnAt, () => null),
+    ])
     return next(e)
-  })
+  }).catch(($, e, next) => next(e)) // never hold up an exit
 
   on('session.compact', async ($, e, next) => {
     const result = await next(e)
@@ -482,7 +515,7 @@ export const register: Register = (on, options) => {
           {note.status === 'ready' ? <Button key="copy" variant="secondary" label="Copy handoff prompt" onPress={() => $.ui.copy({ text: `Read ${note.path} and resume the work it describes.` })} /> : null}
           {note.status === 'ready' ? <Button key="open" variant="secondary" label="Open file" onPress={() => openFile($, note.path)} /> : null}
           {note.status === 'failed' ? <Button key="retry" variant="primary" label="Try again" onPress={() => requestHandoff($, ['manual'])} /> : null}
-          {isBusy ? null : <Button key="close" variant="secondary" label="Close" onPress={() => closeHandoff($)} />}
+          {isBusy ? null : <Button key="close" variant="secondary" label="Close" onPress={() => closeHandoff($, s)} />}
         </Box>
       )
       if (e.surface !== 'terminal' && 'Svg' in ui) {
