@@ -1,0 +1,58 @@
+{
+  "name": "handoff",
+  "version": "0.1.0",
+  "description": "Keeps the prompt cache warm while you are away, writes a handoff note, and restarts in a fresh conversation",
+  "license": "MIT",
+  "author": {
+    "name": "tukaelu"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "keepAlive": {
+      "type": "boolean",
+      "title": "Cache keep-alive",
+      "description": "Keep the main conversation's prompt cache warm while you are away",
+      "default": true
+    },
+    "keepAliveCount": {
+      "type": "number",
+      "title": "Keep-alive count",
+      "description": "How many times to refresh the cache after a reply ends",
+      "default": 3,
+      "min": 1,
+      "max": 10
+    },
+    "keepAliveIntervalMin": {
+      "type": "number",
+      "title": "Keep-alive interval (min)",
+      "description": "Minutes between cache refreshes; mainly for testing",
+      "default": 50,
+      "min": 1,
+      "max": 55
+    },
+    "usageStopPercent": {
+      "type": "number",
+      "title": "Stop at plan usage (%)",
+      "description": "Skip keep-alive when any plan usage window is at or above this",
+      "default": 90,
+      "min": 1,
+      "max": 100
+    },
+    "warnPercent": {
+      "type": "number",
+      "title": "Context warning (%)",
+      "description": "Warn when context usage goes above this",
+      "default": 60,
+      "min": 1,
+      "max": 100
+    },
+    "autoGenPercent": {
+      "type": "number",
+      "title": "Auto-handoff at (%)",
+      "description": "Prepare a handoff when context usage goes above this",
+      "default": 80,
+      "min": 1,
+      "max": 100
+    }
+  }
+}
