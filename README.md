@@ -26,7 +26,15 @@ claude --plugin-dir /path/to/cc-mod-handoff
 
 ## 設定
 
-Claude Code の設定メニュー、または settings の `pluginConfigs` で変更できます。`pluginConfigs` のキーは plugin 名の `handoff` です。`--plugin-dir` で読み込んだ場合は `handoff@inline` になることがあります。
+Claude Code の設定メニュー、または settings の `pluginConfigs` で変更できます。値は `pluginConfigs` の plugin 名（`handoff`）の下の `options` に書きます。`--plugin-dir` で読み込んだ場合は、plugin 名が `handoff@inline` になることがあります。
+
+```json
+"pluginConfigs": {
+  "handoff": {
+    "options": { "keepAliveIntervalMin": 1 }
+  }
+}
+```
 
 | 項目 | キー | 既定値 |
 |---|---|---|
