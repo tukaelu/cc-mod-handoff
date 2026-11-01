@@ -33,6 +33,8 @@ const isUsageHeld = atom({ plugin: 'handoff', key: 'isUsageHeld' } as const, fal
 // null: not checked yet in this session; '': the thresholds are fine (3.2)
 const configWarning = atom({ plugin: 'handoff', key: 'configWarning' } as const, null)
 const lastTurnAt = atom({ plugin: 'handoff', key: 'lastTurnAt' } as const, null)
+// Turn ends by session id, kept across processes: a `claude --resume` starts a new one with no classic.SessionStart.
+const LAST_TURNS = 'lastTurns'
 
 type Timer = { cancel: () => void }
 type Settings = { isOn: boolean; count: number; intervalMs: number; usageStop: number; warn: number; autoGen: number }
@@ -402,6 +404,11 @@ export const register: Register = (on, options) => {
     const c = await read($, cycle)
     if (c?.phase === 'idle') await schedule($, s, c)
     if (c?.phase === 'keeping') await idleFrom($, s, c, 0, c.isRetry)
+    if (c === null && s.isOn) {
+      const at = ((await $.store.get(LAST_TURNS)) as Record<string, number> | undefined)?.[await $.session.id()]
+      const sinceMs = at === undefined ? Infinity : (await $.clock.now()) - at
+      if (sinceMs < s.intervalMs) await idleFrom($, s, { phase: 'off', kept: 0, dueAt: 0, isRetry: false, note: '' }, s.intervalMs - sinceMs, false)
+    }
     const note = await read($, handoff)
     if (note?.status === 'waiting') agentTimer = $.clock.after(0, () => void waitForAgents($))
     if (note?.status === 'generating') await patch($, { status: 'failed', error: 'interrupted by a mod reload' })
@@ -461,6 +468,9 @@ export const register: Register = (on, options) => {
     if (e.agentId !== undefined) return result
     const endedAt = await $.clock.now()
     await update($, lastTurnAt, () => endedAt)
+    const turns = ((await $.store.get(LAST_TURNS)) ?? {}) as Record<string, number>
+    const kept = Object.entries(turns).filter(([, at]) => endedAt - at < s.intervalMs)
+    await $.store.set(LAST_TURNS, { ...Object.fromEntries(kept), [await $.session.id()]: endedAt })
 
     const note = await read($, handoff)
     const isShowing = note !== null && note.isShown

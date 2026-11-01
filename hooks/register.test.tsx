@@ -53,6 +53,10 @@ const setup = (on: any, forks: unknown[], o: { rateLimits?: unknown[]; percent?:
   on('session.end', (_: unknown, e: { sessionId: string }) => ({ sessionId: e.sessionId }))
   on('session.messages', () => ({ value: o.messages ?? MESSAGES }))
   on('session.cwd', () => ({ value: '/repo/my-project' }))
+  on('session.id', () => ({ value: 's1' }))
+  const store: Record<string, unknown> = {}
+  on('store.get', (_: unknown, e: { key: string }) => ({ value: store[e.key] }))
+  on('store.set', (_: unknown, e: { key: string; value: unknown }) => ((store[e.key] = e.value), { value: undefined }))
   on('fs.write', (_: unknown, e: { path: string; text: string }) => ((files[e.path] = e.text), { value: undefined }))
   on('fs.read', (_: unknown, e: { path: string }) => ({ value: files[e.path] }))
   on('fs.exists', (_: unknown, e: { path: string }) => ({ value: e.path in files }))
@@ -62,7 +66,7 @@ const setup = (on: any, forks: unknown[], o: { rateLimits?: unknown[]; percent?:
     return { value: {} }
   })
   on('prompt.submit', (_: unknown, e: { text: string }) => (calls.push(`submit:${e.text}`), { text: e.text }))
-  return { clock, forks: () => forkCalls, cycle: () => saved.cycle, handoff: () => saved.handoff, files, calls }
+  return { clock, forks: () => forkCalls, cycle: () => saved.cycle, handoff: () => saved.handoff, files, calls, store }
 }
 
 const endTurn = async ($: any) => {
@@ -183,6 +187,17 @@ test('a resumed session past the TTL does not keep', async ($, on) => {
   const { cycle } = setup(on, [HIT])
   await $.classic.SessionStart({ source: 'resume', seconds_since_last_response: 4000, prompt_cache_likely_expired: true } as any)
   expect(cycle()).toBeUndefined()
+})
+
+test('a session resumed in a new process keeps from its last stored turn', async ($, on) => {
+  const { clock, cycle, store } = setup(on, [HIT])
+  store.lastTurns = { s1: clock.now() - 10 * MIN, old: clock.now() - 60 * MIN }
+  await $.session.start(START as any)
+  expect(cycle().phase).toBe('idle')
+  expect(cycle().dueAt - clock.now()).toBe(40 * MIN)
+
+  await endTurn($)
+  expect(Object.keys(store.lastTurns as object)).toEqual(['s1']) // turns past the interval are dropped
 })
 
 test('thresholds out of order are warned in the band', { options: { warnPercent: 85, autoGenPercent: 80 } }, async ($, on) => {
