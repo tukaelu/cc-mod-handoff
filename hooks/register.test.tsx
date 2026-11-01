@@ -32,7 +32,9 @@ const setup = (on: any, forks: unknown[], o: { rateLimits?: unknown[]; percent?:
     return next(e)
   })
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 200_000, percent: o.percent ?? 10 }, rateLimits: o.rateLimits ?? [] } }))
-  on('model.fork', async () => {
+  const prompts: string[] = []
+  on('model.fork', async (_: unknown, e: { prompt: string }) => {
+    prompts.push(e.prompt)
     const answer = forks[Math.min(forkCalls++, forks.length - 1)]
     if (o.forkDelayMs) await clock.sleep(o.forkDelayMs)
     if (answer instanceof Error) throw answer
@@ -66,7 +68,7 @@ const setup = (on: any, forks: unknown[], o: { rateLimits?: unknown[]; percent?:
     return { value: {} }
   })
   on('prompt.submit', (_: unknown, e: { text: string }) => (calls.push(`submit:${e.text}`), { text: e.text }))
-  return { clock, forks: () => forkCalls, cycle: () => saved.cycle, handoff: () => saved.handoff, files, calls, store }
+  return { clock, forks: () => forkCalls, cycle: () => saved.cycle, handoff: () => saved.handoff, files, calls, store, prompts }
 }
 
 const endTurn = async ($: any) => {
@@ -93,7 +95,7 @@ test('keeps three times, then writes the handoff', async ($, on) => {
   expect(handoff().reasons).toEqual(['away'])
   expect(handoff().path).toMatch(/^\/home\/u\/\.claude\/handoffs\/\d{4}-\d\d-\d\d-\d{6}-my-project\.md$/)
   expect(files[handoff().path]).toMatch(/^Generated: \d{4}-\d\d-\d\d \d\d:\d\d · Last reply: \d{4}-\d\d-\d\d \d\d:\d\d\n\n# 引き継ぎ書$/)
-  expect(handoff().steps.map((s: { result: string }) => s.result).slice(0, 3)).toEqual(['2 messages', '1 file', '0 skills, 1 link'])
+  expect(handoff().steps.map((s: { label: string }) => s.label)).toEqual(['Summarizing', 'Writing to disk & verifying'])
 })
 
 test('a real turn resets the count', async ($, on) => {
@@ -233,7 +235,7 @@ test('the elapsed-time ticker never undoes a finished step', async ($, on) => {
   await clock.advance(10_000) // the fork answers as the ticker fires
   await clock.settle()
   expect(handoff().status).toBe('ready')
-  expect(handoff().steps[3]).toEqual({ label: 'Summarizing with the model', result: '10s', isDone: true })
+  expect(handoff().steps[0]).toEqual({ label: 'Summarizing', result: '10s', isDone: true })
 })
 
 test('a reload checks the thresholds again', async ($, on) => {
@@ -253,11 +255,11 @@ test('a reload in the due phase still prepares the handoff', async ($, on) => {
 
 test('search directories are not counted as files', async ($, on) => {
   const messages = [{ role: 'assistant', text: '', toolUses: [{ tool_use_id: 'g', tool: 'Grep', input: { pattern: 'x', path: '/repo' } }] }]
-  const { clock, handoff } = setup(on, [NOTE], { messages })
+  const { clock, prompts } = setup(on, [NOTE], { messages })
   const ui = await $.ui.mount({ ...BAND, surface: 'desktop' } as any)
   await ui.press({ key: 'handoff' } as any)
   await clock.settle()
-  expect(handoff().steps[1].result).toBe('0 files')
+  expect(prompts.at(-1)).toContain('使ったファイル:\nなし')
 })
 
 test('a thrown keep-alive retries once, then stops', async ($, on) => {

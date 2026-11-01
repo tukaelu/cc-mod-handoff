@@ -150,16 +150,11 @@ const showElapsed = async ($: EngineInterface, steps: Step[], i: number, started
   await patch($, { steps: [...steps] })
 }
 
-const count = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
-
 const URL_RE = /https?:\/\/[^\s)>\]"'`]+/g
 
 const generate = async ($: EngineInterface) => {
   const steps: Step[] = [
-    { label: 'Scanning messages', result: '', isDone: false },
-    { label: 'Collecting files used in this chat', result: '', isDone: false },
-    { label: 'Gathering skills, tools & URLs', result: '', isDone: false },
-    { label: 'Summarizing with the model', result: '', isDone: false },
+    { label: 'Summarizing', result: '', isDone: false },
     { label: 'Writing to disk & verifying', result: '', isDone: false },
   ]
   const done = async (i: number, result: string) => {
@@ -170,22 +165,17 @@ const generate = async ($: EngineInterface) => {
 
   try {
     const messages = await $.session.messages()
-    await done(0, count(messages.length, 'message'))
-
     const uses = messages.flatMap(m => m.toolUses)
     const files = [...new Set(uses.flatMap(u => ['file_path', 'notebook_path'].map(k => u.input[k]).filter((v): v is string => typeof v === 'string')))]
-    await done(1, count(files.length, 'file'))
-
     const skills = [...new Set(uses.filter(u => u.tool === 'Skill').map(u => String(u.input.skill ?? '')).filter(Boolean))]
     const tools = [...new Set(uses.map(u => u.tool))]
     const links = [...new Set(messages.flatMap(m => m.text.match(URL_RE) ?? []))].slice(0, 30)
-    await done(2, `${count(skills.length, 'skill')}, ${count(links.length, 'link')}`)
 
     const startedAt = await $.clock.now()
-    const ticker = $.clock.every(5000, () => void showElapsed($, steps, 3, startedAt))
+    const ticker = $.clock.every(5000, () => void showElapsed($, steps, 0, startedAt))
     const r = await $.model.fork({ prompt: handoffPrompt(files, skills, tools, links) }).finally(() => ticker.cancel())
     if (!r.isAnswered) throw new Error(`fork: ${r.reason}`)
-    await done(3, `${Math.round(((await $.clock.now()) - startedAt) / 1000)}s`)
+    await done(0, `${Math.round(((await $.clock.now()) - startedAt) / 1000)}s`)
 
     const home = (await $.env.get('HOME')) ?? ''
     const project = (await $.session.cwd()).split('/').filter(Boolean).at(-1) ?? 'session'
@@ -195,7 +185,7 @@ const generate = async ($: EngineInterface) => {
     const path = `${home}/.claude/handoffs/${stamp(now)}-${project}.md`
     await $.fs.write(path, text)
     if ((await $.fs.read(path)) !== text) throw new Error(`could not read back what was saved: ${path}`)
-    await done(4, path.split('/').at(-1) ?? path)
+    await done(1, path.split('/').at(-1) ?? path)
 
     await patch($, { status: 'ready', path, text })
   } catch (err) {
