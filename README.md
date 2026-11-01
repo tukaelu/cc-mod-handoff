@@ -1,6 +1,6 @@
-# handoff
+# cc-mod-handoff
 
-A Claude Code mod that keeps the main conversation's prompt cache warm while you are away, writes a long conversation down as a handoff note, and picks the work up again in a fresh conversation.
+`handoff` is a Claude Code mod that keeps the main conversation's prompt cache warm while you are away, writes a long conversation down as a handoff note, and picks the work up again in a fresh conversation.
 
 - **Cache keep-alive**: every 50 minutes after a reply ends, it sends the main conversation's request again through `$.model.fork`, which extends the cache's TTL. By default it does this up to 3 times. A session reopened with `/resume` or `claude --resume` within the interval counts from its last reply.
 - **Handoff note**: it summarizes the conversation into a note in the conversation's language and saves it to `~/.claude/handoffs/<date-time>-<project>.md` when either of these happens:
