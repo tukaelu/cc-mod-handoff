@@ -7,7 +7,7 @@ const usage = (r: { cache_read_input_tokens: number }) => ({
 const HIT = { isAnswered: true, text: 'ok', usage: usage({ cache_read_input_tokens: 1000 }) }
 const MISS = { isAnswered: true, text: 'ok', usage: usage({ cache_read_input_tokens: 0 }) }
 const FAIL = { isAnswered: false, reason: 'empty-reply', usage: usage({ cache_read_input_tokens: 0 }) }
-const NOTE = { isAnswered: true, text: '# 引き継ぎ書', usage: usage({ cache_read_input_tokens: 1000 }) }
+const NOTE = { isAnswered: true, text: '# Handoff note', usage: usage({ cache_read_input_tokens: 1000 }) }
 
 const MESSAGES = [
   { role: 'user', text: 'see https://example.com/doc', toolUses: [] },
@@ -98,7 +98,7 @@ test('keeps three times, then writes the handoff', async ($, on) => {
   expect(handoff().status).toBe('ready')
   expect(handoff().reasons).toEqual(['away'])
   expect(handoff().path).toMatch(/^\/home\/u\/\.claude\/handoffs\/\d{4}-\d\d-\d\d-\d{6}-my-project\.md$/)
-  expect(files[handoff().path]).toMatch(/^Generated: \d{4}-\d\d-\d\d \d\d:\d\d · Last reply: \d{4}-\d\d-\d\d \d\d:\d\d\n\n# 引き継ぎ書$/)
+  expect(files[handoff().path]).toMatch(/^Generated: \d{4}-\d\d-\d\d \d\d:\d\d · Last reply: \d{4}-\d\d-\d\d \d\d:\d\d\n\n# Handoff note$/)
   expect(handoff().steps.map((s: { label: string }) => s.label)).toEqual(['Summarizing', 'Writing to disk & verifying'])
 })
 
@@ -164,13 +164,13 @@ test('the band offers the handoff and switching clears then sends it', async ($,
   await endTurn($)
   await clock.settle()
   const terminal = await $.ui.mount({ ...BAND, surface: 'terminal' } as any)
-  expect((await terminal.find({ type: 'Text', text: /Note saved/ }))?.text).toBe('Note saved · 67 chars')
+  expect((await terminal.find({ type: 'Text', text: /Note saved/ }))?.text).toBe('Note saved · 74 chars')
   await terminal.unmount()
 
   // desktop draws the band as one SVG; its alt carries the heading
   const ui = await $.ui.mount({ ...BAND, surface: 'desktop' } as any)
   const svg = await ui.find({ type: 'Svg' })
-  expect(svg?.props.alt).toBe('Note saved · 67 chars')
+  expect(svg?.props.alt).toBe('Note saved · 74 chars')
   expect(String(svg?.props.source)).toContain('Stored at')
   expect(String(svg?.props.source)).not.toMatch(/="[^"]*"[^\s>/]/) // every attribute value ends cleanly
   expect((await ui.findAll({ type: 'Button' })).length).toBe(4)
@@ -179,7 +179,7 @@ test('the band offers the handoff and switching clears then sends it', async ($,
   await ui.unmount()
   expect(calls).toHaveLength(2)
   expect(calls[0]).toBe('/clear')
-  expect(calls[1]).toMatch(/^submit:Generated: .+\n\n# 引き継ぎ書$/)
+  expect(calls[1]).toMatch(/^submit:Generated: .+\n\n# Handoff note$/)
 })
 
 test('a resumed session within the TTL keeps from its last response', async ($, on) => {
@@ -283,7 +283,7 @@ test('search directories are not counted as files', async ($, on) => {
   const ui = await $.ui.mount({ ...BAND, surface: 'desktop' } as any)
   await ui.press({ key: 'handoff' } as any)
   await clock.settle()
-  expect(prompts.at(-1)).toContain('使ったファイル:\nなし')
+  expect(prompts.at(-1)).toContain('Files used:\nNone')
 })
 
 test('a thrown keep-alive retries once, then stops', async ($, on) => {

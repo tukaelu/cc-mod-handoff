@@ -121,7 +121,7 @@ const keep = async ($: EngineInterface, s: Settings) => {
   return save($, { ...now, phase: 'stopped', note: `keep-alive failed: ${r.reason}` })
 }
 
-// 5 (抑止中に離席の条件): an unchanged handoff is shown again instead of regenerated.
+// 5 (away while held): an unchanged handoff is shown again instead of regenerated.
 const requestHandoff = async ($: EngineInterface, reasons: Reason[]) => {
   const note = await read($, handoff)
   if (note !== null && (note.status === 'waiting' || note.status === 'generating')) {
@@ -202,45 +202,45 @@ const generate = async ($: EngineInterface) => {
 }
 
 const handoffPrompt = (files: string[], skills: string[], tools: string[], links: string[]) => {
-  const list = (xs: string[]) => (xs.length === 0 ? 'なし' : xs.map(x => `- ${x}`).join('\n'))
-  return `ここまでの会話を、新しいセッションで作業を再開するための引き継ぎ書にまとめてください。これは自動の依頼で、ユーザーのメッセージではありません。ツールは使えません。引き継ぎ書の本文だけを Markdown で出力してください。
+  const list = (xs: string[]) => (xs.length === 0 ? 'None' : xs.map(x => `- ${x}`).join('\n'))
+  return `Summarize the conversation so far as a handoff note for resuming the work in a new session. This is an automated request, not a message from the user. No tools are available. Output only the body of the note, in Markdown.
 
-先頭に1行で、これが引き継ぎ書であることと、内容を確認して作業を再開する指示を書いてください。続けて次の節をこの順で書き、該当がない節は「なし」とします。
+Start with one line saying that this is a handoff note and telling the reader to review it and then resume the work. Then write the following sections in this order; for a section with nothing to report, write "None".
 
-1. 作業の目的と範囲
-2. ユーザーの制約と指示
-3. 現在の進捗
-4. 検証済みの内容と結果
-5. 変更済みだが未検証の内容
-6. 未実施の内容
-7. 失敗した方法とその理由
-8. 決定事項と却下した案
-9. 調査済みの事実と関連ファイル
-10. 未完了の事項と次の具体的な作業
-11. ユーザーの回答を待っている事項
-12. 推奨スキル
+1. Goal and scope of the work
+2. The user's constraints and instructions
+3. Current progress
+4. What has been verified, and the results
+5. What has been changed but not verified
+6. What has not been done yet
+7. Approaches that failed, and why
+8. Decisions made and options rejected
+9. Facts already investigated, and related files
+10. Open items and the concrete next steps
+11. Questions waiting for the user's answer
+12. Recommended skills
 
-書き方:
-- 会話を一次情報とし、会話にないことは書かない。推測は推測と明記する。
-- 省略すると再調査が必要になる情報（失敗の理由、数値、決定の根拠）を優先して残す。数値はそのまま書く。
-- 既存の仕様書、計画、コミットにある内容は複製せず、パスや URL で参照する。
-- 会話の中にしか実体がないもの（番号や名前で呼んだ指摘や案、貼り付けた内容、画像など）は、番号や名前だけでなく要旨も書く。
-- API キー、パスワード、個人情報は伏せる。
-- 長さは会話の規模に応じて必要十分にし、長くても 3000 語程度に収める。
-- 会話の言語で書く。
+How to write it:
+- Treat the conversation as the primary source and write nothing that is not in it. Mark guesses as guesses.
+- Keep first what would otherwise have to be looked up again: the reasons for failures, numbers, the grounds for decisions. Write numbers as they are.
+- Do not copy what existing specs, plans or commits already hold; refer to them by path or URL.
+- For things that exist only in the conversation (points or options referred to by number or name, pasted content, images), write their gist, not only the number or name.
+- Redact API keys, passwords and personal information.
+- Make it as long as the conversation needs, and no longer than about 3000 words.
+- Write the whole note, section headings included, in the language the user writes in.
 
-会話から機械的に抽出した事実（参考にし、関係するものだけを書く）:
+Facts extracted mechanically from the conversation (for reference; include only those that matter):
 
-使ったファイル:
+Files used:
 ${list(files)}
 
-使ったスキル:
+Skills used:
 ${list(skills)}
 
-使ったツール:
+Tools used:
 ${list(tools)}
 
-会話に出たリンク:
+Links in the conversation:
 ${list(links)}`
 }
 
