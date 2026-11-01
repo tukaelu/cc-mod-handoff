@@ -28,6 +28,7 @@ const KEEP_PROMPT = 'This is an automated prompt-cache keep-alive, not a user me
 
 const cycle = atom({ plugin: 'handoff', key: 'cycle' } as const, null)
 const isWarned = atom({ plugin: 'handoff', key: 'isWarned' } as const, false)
+const isFull = atom({ plugin: 'handoff', key: 'isFull' } as const, false)
 const handoff = atom({ plugin: 'handoff', key: 'handoff' } as const, null)
 const isUsageHeld = atom({ plugin: 'handoff', key: 'isUsageHeld' } as const, false)
 // null: not checked yet in this session; '': the thresholds are fine (3.2)
@@ -57,8 +58,9 @@ const stamp = (ms: number) => {
   return `${day(d)}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
 }
 
+const OFF: Cycle = { phase: 'off', kept: 0, dueAt: 0, isRetry: false, note: '' }
 const save = ($: EngineInterface, c: Cycle) => update($, cycle, () => c)
-const hold = ($: EngineInterface) => save($, { phase: 'held', kept: 0, dueAt: 0, isRetry: false, note: '' })
+const hold = ($: EngineInterface) => save($, { ...OFF, phase: 'held' })
 const patch = ($: EngineInterface, p: Partial<Handoff>) => update($, handoff, note => (note === null ? note : { ...note, ...p }))
 
 const schedule = async ($: EngineInterface, s: Settings, c: Cycle) => {
@@ -74,7 +76,7 @@ const idleFrom = async ($: EngineInterface, s: Settings, c: Cycle, waitMs: numbe
 
 // 6: a resumed session keeps its cache only within the interval; time the cycle from its last response.
 const resumeFrom = async ($: EngineInterface, s: Settings, sinceMs: number) => {
-  if (s.isOn && sinceMs < s.intervalMs) await idleFrom($, s, { phase: 'off', kept: 0, dueAt: 0, isRetry: false, note: '' }, s.intervalMs - sinceMs, false)
+  if (s.isOn && sinceMs < s.intervalMs) await idleFrom($, s, OFF, s.intervalMs - sinceMs, false)
 }
 
 // A thrown step is a failed keep: retry once, then stop.
@@ -425,6 +427,7 @@ export const register: Register = (on, options) => {
       update($, cycle, () => null),
       update($, handoff, () => null),
       update($, isWarned, () => false),
+      update($, isFull, () => false),
       update($, isUsageHeld, () => false),
       update($, configWarning, () => null),
       update($, lastTurnAt, () => null),
@@ -454,7 +457,7 @@ export const register: Register = (on, options) => {
     } else if (note !== null) {
       await patch($, { isStale: true })
     }
-    await save($, { phase: 'turn', kept: 0, dueAt: 0, isRetry: false, note: '' })
+    await save($, { ...OFF, phase: 'turn' })
     return next(e)
   })
 
@@ -471,10 +474,9 @@ export const register: Register = (on, options) => {
 
     const note = await read($, handoff)
     const isShowing = note !== null && note.isShown
-    const base: Cycle = { phase: 'off', kept: 0, dueAt: 0, isRetry: false, note: '' }
     if (isShowing) await hold($) // 4: no keep-alive while the confirmation waits
-    else if (s.isOn) await idleFrom($, s, base, s.intervalMs, false)
-    else await save($, base)
+    else if (s.isOn) await idleFrom($, s, OFF, s.intervalMs, false)
+    else await save($, OFF)
 
     await checkThresholds($, s).catch(() => undefined)
 
@@ -489,8 +491,12 @@ export const register: Register = (on, options) => {
     // 5: the usage hold lifts once usage falls below the warning threshold.
     if (percent < s.warn) await update($, isUsageHeld, () => false)
 
-    if (percent >= 100) $.ui.toast('Context is full. Run /compact or start a handoff.')
-    else if (percent > s.autoGen && !(await read($, isUsageHeld)) && !isShowing) await requestHandoff($, ['usage'])
+    // Once per filling, like the warning above.
+    const wasFull = await read($, isFull)
+    if (percent >= 100 && !wasFull) $.ui.toast('Context is full. Run /compact or start a handoff.')
+    if (percent >= 100 !== wasFull) await update($, isFull, () => percent >= 100)
+    if (percent >= 100) return result
+    if (percent > s.autoGen && !(await read($, isUsageHeld)) && !isShowing) await requestHandoff($, ['usage'])
     return result
   })
 
@@ -498,7 +504,6 @@ export const register: Register = (on, options) => {
     if (e.props.hasSurvey) return next(e)
     const c = await read($, cycle)
     const note = await read($, handoff)
-    const percent = (await $.session.usage()).context.percent
     const ui = $.ui.resolve(e)
     const { Box, Button, Text } = ui
     const status = statusOf(c, s)
@@ -569,6 +574,7 @@ export const register: Register = (on, options) => {
       )
     }
 
+    const percent = (await $.session.usage()).context.percent
     const warning = await read($, configWarning)
     const level = percent === undefined || percent <= s.warn ? 'success' : percent <= s.autoGen ? 'warning' : 'error'
     return (

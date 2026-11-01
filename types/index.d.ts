@@ -19,6 +19,6 @@ export type Handoff = {
 
 declare module 'claude-code' {
   interface PluginState {
-    handoff: { cycle: Cycle | null; isWarned: boolean; handoff: Handoff | null; isUsageHeld: boolean; configWarning: string | null; lastTurnAt: number | null }
+    handoff: { cycle: Cycle | null; isWarned: boolean; isFull: boolean; handoff: Handoff | null; isUsageHeld: boolean; configWarning: string | null; lastTurnAt: number | null }
   }
 }

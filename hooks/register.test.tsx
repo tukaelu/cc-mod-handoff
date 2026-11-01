@@ -42,7 +42,8 @@ const setup = (on: any, forks: unknown[], o: { rateLimits?: unknown[]; percent?:
   })
   on('turn.start', (_: unknown, e: { turnId: string }) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: 'done' }))
-  on('ui.toast', () => ({ value: undefined }))
+  const toasts: string[] = []
+  on('ui.toast', (_: unknown, e: { text: string }) => (toasts.push(e.text), { value: undefined }))
   on('agent.list', () => {
     if (o.agentListFails) throw new Error('agent.list failed')
     return { value: o.busyAgents?.() ? [{ id: 'a', status: 'running' }] : [] }
@@ -71,7 +72,7 @@ const setup = (on: any, forks: unknown[], o: { rateLimits?: unknown[]; percent?:
     return { value: {} }
   })
   on('prompt.submit', (_: unknown, e: { text: string }) => (calls.push(`submit:${e.text}`), { text: e.text }))
-  return { clock, forks: () => forkCalls, cycle: () => saved.cycle, handoff: () => saved.handoff, saved, files, calls, store, prompts }
+  return { clock, forks: () => forkCalls, cycle: () => saved.cycle, handoff: () => saved.handoff, saved, files, calls, store, prompts, toasts }
 }
 
 const endTurn = async ($: any) => {
@@ -192,6 +193,13 @@ test('a resume within the interval keeps even when the engine guesses the cache 
   const { clock, cycle } = setup(on, [HIT])
   await $.classic.SessionStart({ source: 'resume', seconds_since_last_response: 600, prompt_cache_likely_expired: true } as any)
   expect(cycle().dueAt - clock.now()).toBe(40 * MIN)
+})
+
+test('a full context is toasted once, not every turn', async ($, on) => {
+  const { toasts } = setup(on, [HIT], { percent: 100 })
+  await endTurn($)
+  await endTurn($)
+  expect(toasts.filter(t => t.startsWith('Context is full'))).toHaveLength(1)
 })
 
 test('a broken store still starts the keep-alive', async ($, on) => {
