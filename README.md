@@ -1,33 +1,37 @@
 # handoff
 
-離席中に主会話のプロンプトキャッシュを維持し、長い会話を引き継ぎ書にまとめて新しい会話で再開できるようにする Claude Code の mod です。
+A Claude Code mod that keeps the main conversation's prompt cache warm while you are away, writes a long conversation down as a handoff note, and picks the work up again in a fresh conversation.
 
-## できること
+- **Cache keep-alive**: every 50 minutes after a reply ends, it sends the main conversation's request again through `$.model.fork`, which extends the cache's TTL. By default it does this up to 3 times. A session reopened with `/resume` or `claude --resume` within the interval counts from its last reply.
+- **Handoff note**: it summarizes the conversation into a note in the conversation's language and saves it to `~/.claude/handoffs/<date-time>-<project>.md` when either of these happens:
+  - you are away: 50 more minutes pass after the last keep-alive
+  - the context fills past 80%
+- **Fresh start**: once the note is ready, a confirmation band appears above the prompt. **Resume in a fresh chat** runs `/clear` and sends the note as the first message; `/resume` still opens the old conversation. **Copy resume prompt** copies a line that points a new chat at the note, **View note** opens it, and **Keep going here** closes the band. If the conversation moves on before you choose (a new turn or a compact), the heading says so and the note is written again when you resume.
+- **Band**: the context fill, the keep-alive state (for example `Cache kept warm · next refresh 14:20 (2 left)`) and a **Handoff** button that writes a note at any time.
 
-- **キャッシュ維持**：応答が終わってから50分ごとに、`$.model.fork` で主会話と同じリクエストを送り、キャッシュの TTL を延ばします。既定では3回まで維持します。
-- **引き継ぎ書の生成**：次のどちらかで、会話を引き継ぎ書にまとめて `~/.claude/handoffs/<日時>-<プロジェクト名>.md` に保存します。
-  - 3回維持してからさらに50分たった（離席）
-  - コンテキスト使用率が80%を超えた
-- **新しい会話での再開**：引き継ぎ書ができると、プロンプトの上のバンドに確認が出ます。「Resume in a fresh chat」を押すと、`/clear` してから引き継ぎ書を最初のメッセージとして送ります。元の会話は `/resume` で開き直せます。
-- **バンド**（表示は英語）：コンテキスト使用率、キャッシュ維持の状態（例：`Cache kept warm · next refresh 14:20 (2 left)`）、いつでも引き継ぎ書を作れる「Handoff」ボタンを表示します。
+## Requirements
 
-## 前提
+- macOS. **View note** opens the note with `open`, and the note's folder comes from `HOME`. Other systems are untested.
+- A 1-hour TTL on the main conversation's prompt cache, the default on Pro and Max plans. Where it is 5 minutes (with an API key, for example), the first keep-alive finds no cache hit and the keep-alive stops.
+- For conversations past 200k tokens, set `idleCompaction: false`. On Claude Code v2.1.309, without it, the conversation is compacted about 54 minutes after a reply ends and the keep-alive goes to waste. This may change between Claude Code versions.
 
-- macOS で使うこと。「View note」は `open` コマンドで引き継ぎ書を開き、保存先は `HOME` から決めます。ほかの OS では確かめていません。
-- 主会話のプロンプトキャッシュの TTL が 1h であること。Pro / Max のプラン内なら既定で 1h です。API キー利用時などで 5m のときは、1回目の維持でキャッシュに当たらないことを検知し、維持を止めます。
-- 200k トークンを超える会話では、`idleCompaction: false` の設定を推奨します。Claude Code v2.1.309 では、設定しないと応答の終了から約54分後に会話が要約され、維持が無駄になります。この挙動は Claude Code の版によって変わる可能性があります。
+## Install
 
-## インストール
+At the prompt of a Claude Code session; answer `y` to add the marketplace, then pick a scope:
 
-開発中は、このリポジトリを plugin フォルダとして指定して起動します。
-
-```bash
-claude --plugin-dir /path/to/cc-mod-handoff
+```
+/plugin install handoff --marketplace tukaelu/cc-mod-handoff
 ```
 
-## 設定
+From a shell:
 
-Claude Code の設定メニュー、または settings の `pluginConfigs` で変更できます。値は `pluginConfigs` の plugin 名（`handoff`）の下の `options` に書きます。`--plugin-dir` で読み込んだ場合は、plugin 名が `handoff@inline` になることがあります。
+```bash
+claude plugin install handoff --marketplace tukaelu/cc-mod-handoff
+```
+
+## Settings
+
+Set in `/config` (in a terminal) or in `~/.claude/settings.json` under `pluginConfigs`, the values going under the plugin's `options`. Loaded with `--plugin-dir`, the plugin's name may be `handoff@inline`.
 
 ```json
 "pluginConfigs": {
@@ -37,22 +41,28 @@ Claude Code の設定メニュー、または settings の `pluginConfigs` で�
 }
 ```
 
-| 項目 | キー | 既定値 |
+| Setting | Key | Default |
 |---|---|---|
-| Cache keep-alive | `keepAlive` | オン |
-| Keep-alive count | `keepAliveCount` | 3回 |
-| Keep-alive interval (min) | `keepAliveIntervalMin` | 50分（1〜55 の範囲で指定） |
-| Stop at plan usage (%) | `usageStopPercent` | 90% |
-| Context warning (%) | `warnPercent` | 60% |
-| Auto-handoff at (%) | `autoGenPercent` | 80% |
+| Cache keep-alive | `keepAlive` | on |
+| Keep-alive count | `keepAliveCount` | 3 |
+| Keep-alive interval (min) | `keepAliveIntervalMin` | 50 (1 to 55) |
+| Stop at plan usage (%) | `usageStopPercent` | 90 |
+| Context warning (%) | `warnPercent` | 60 |
+| Auto-handoff at (%) | `autoGenPercent` | 80 |
 
-警告しきい値 < 自動生成しきい値 < Claude Code の自動 compact しきい値 になっていないと、バンドに警告を出します。
+The band warns when the thresholds are out of order: the warning must be below the auto-handoff, and the auto-handoff below Claude Code's auto-compact.
 
-## 費用
+## Cost
 
-コンテキスト全体を通常の入力として送ったときの費用を1とすると、維持1回の費用はキャッシュの読み込みとして約0.1です（Opus 5.5 と Sonnet 5.5 は約0.05）。キャッシュが切れてから戻ると、全文を書き込み直すので約2かかります。サブスクリプションでは、費用の代わりにプランの使用量を消費します。プランの使用量のどれかの枠が `usageStopPercent` 以上になると、維持を止めます。
+Taking the whole context sent as plain input as 1, one keep-alive costs about 0.1 as a cache read (about 0.05 on Opus 5.5 and Sonnet 5.5). Coming back after the cache expired writes it all again, about 2. On a subscription, the keep-alive uses plan usage instead of money, and it stops once any plan usage window reaches `usageStopPercent`.
 
-## 開発
+## Development
+
+Run Claude Code with this folder as a plugin folder:
+
+```bash
+claude --plugin-dir /path/to/cc-mod-handoff
+```
 
 ```bash
 claude plugin validate .
@@ -61,3 +71,7 @@ claude plugin validate .
 ```bash
 claude plugin test .
 ```
+
+## License
+
+MIT

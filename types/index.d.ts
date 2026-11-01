@@ -1,11 +1,11 @@
-// off: 維持オフ / turn: 実ターン中 / idle: 次の維持を待つ / keeping: 維持リクエスト中
-// stopped: 維持停止 / due: N 回維持して生成の時刻になった / held: 引き継ぎ書の表示中か続行後で、維持しない
+// off: keep-alive off / turn: a real turn runs / idle: waiting for the next keep-alive / keeping: a keep-alive request runs
+// stopped: keep-alive stopped / due: kept N times, time to write the note / held: a note is shown or was closed; no keep-alive
 export type Phase = 'off' | 'turn' | 'idle' | 'keeping' | 'stopped' | 'due' | 'held'
 export type Cycle = { phase: Phase; kept: number; dueAt: number; isRetry: boolean; note: string }
 
 export type Reason = 'away' | 'usage' | 'manual'
 export type Step = { label: string; result: string; isDone: boolean }
-// waiting: 作業終了待ち / generating: 生成中 / ready: 確認待ち / failed: 生成失敗
+// waiting: for running agents to finish / generating: writing the note / ready: waiting for a choice / failed: could not write it
 export type Handoff = {
   status: 'waiting' | 'generating' | 'ready' | 'failed'
   reasons: Reason[]

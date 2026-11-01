@@ -1,0 +1,17 @@
+{
+  "name": "cc-mod-handoff",
+  "owner": {
+    "name": "Tsukasa Nishiyama"
+  },
+  "metadata": {
+    "description": "The handoff Claude Code mod."
+  },
+  "plugins": [
+    {
+      "name": "handoff",
+      "source": "./",
+      "description": "Mod: keeps the prompt cache warm while you are away, writes a handoff note, and restarts in a fresh conversation.",
+      "version": "0.1.0"
+    }
+  ]
+}

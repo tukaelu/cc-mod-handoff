@@ -4,7 +4,7 @@
   "description": "Keeps the prompt cache warm while you are away, writes a handoff note, and restarts in a fresh conversation",
   "license": "MIT",
   "author": {
-    "name": "tukaelu"
+    "name": "Tsukasa Nishiyama"
   },
   "types": "./types/index.d.ts",
   "userConfig": {
