@@ -20,7 +20,7 @@ const BAND = {
   props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 80, scroll: { offset: 0, bodyRows: 20 }, view: {} },
 } as const
 
-const setup = (on: any, forks: unknown[], o: { rateLimits?: unknown[]; percent?: number; busyAgents?: () => boolean; agentListFails?: boolean; clearDelayMs?: number; forkDelayMs?: number; stale?: Record<string, unknown>; messages?: unknown[] } = {}) => {
+const setup = (on: any, forks: unknown[], o: { rateLimits?: unknown[]; percent?: number; busyAgents?: () => boolean; agentListFails?: boolean; clearDelayMs?: number; forkDelayMs?: number; stale?: Record<string, unknown>; messages?: unknown[]; storeFails?: boolean } = {}) => {
   const clock = mock.clock(on)
   mock.env(on, { HOME: '/home/u' })
   let forkCalls = 0
@@ -57,7 +57,10 @@ const setup = (on: any, forks: unknown[], o: { rateLimits?: unknown[]; percent?:
   on('session.cwd', () => ({ value: '/repo/my-project' }))
   on('session.id', () => ({ value: 's1' }))
   const store: Record<string, unknown> = {}
-  on('store.get', (_: unknown, e: { key: string }) => ({ value: store[e.key] }))
+  on('store.get', (_: unknown, e: { key: string }) => {
+    if (o.storeFails) throw new Error('store broken')
+    return { value: store[e.key] }
+  })
   on('store.set', (_: unknown, e: { key: string; value: unknown }) => ((store[e.key] = e.value), { value: undefined }))
   on('fs.write', (_: unknown, e: { path: string; text: string }) => ((files[e.path] = e.text), { value: undefined }))
   on('fs.read', (_: unknown, e: { path: string }) => ({ value: files[e.path] }))
@@ -68,7 +71,7 @@ const setup = (on: any, forks: unknown[], o: { rateLimits?: unknown[]; percent?:
     return { value: {} }
   })
   on('prompt.submit', (_: unknown, e: { text: string }) => (calls.push(`submit:${e.text}`), { text: e.text }))
-  return { clock, forks: () => forkCalls, cycle: () => saved.cycle, handoff: () => saved.handoff, files, calls, store, prompts }
+  return { clock, forks: () => forkCalls, cycle: () => saved.cycle, handoff: () => saved.handoff, saved, files, calls, store, prompts }
 }
 
 const endTurn = async ($: any) => {
@@ -185,6 +188,18 @@ test('a resumed session within the TTL keeps from its last response', async ($, 
   expect(cycle().dueAt - clock.now()).toBe(40 * MIN)
 })
 
+test('a resume within the interval keeps even when the engine guesses the cache expired', async ($, on) => {
+  const { clock, cycle } = setup(on, [HIT])
+  await $.classic.SessionStart({ source: 'resume', seconds_since_last_response: 600, prompt_cache_likely_expired: true } as any)
+  expect(cycle().dueAt - clock.now()).toBe(40 * MIN)
+})
+
+test('a broken store still starts the keep-alive', async ($, on) => {
+  const { cycle } = setup(on, [HIT], { storeFails: true })
+  await endTurn($)
+  expect(cycle().phase).toBe('idle')
+})
+
 test('a resumed session past the TTL does not keep', async ($, on) => {
   const { cycle } = setup(on, [HIT])
   await $.classic.SessionStart({ source: 'resume', seconds_since_last_response: 4000, prompt_cache_likely_expired: true } as any)
@@ -192,11 +207,12 @@ test('a resumed session past the TTL does not keep', async ($, on) => {
 })
 
 test('a session resumed in a new process keeps from its last stored turn', async ($, on) => {
-  const { clock, cycle, store } = setup(on, [HIT])
+  const { clock, cycle, store, saved } = setup(on, [HIT])
   store.lastTurns = { s1: clock.now() - 10 * MIN, old: clock.now() - 60 * MIN }
   await $.session.start(START as any)
   expect(cycle().phase).toBe('idle')
   expect(cycle().dueAt - clock.now()).toBe(40 * MIN)
+  expect(saved.lastTurnAt).toBe(clock.now() - 10 * MIN) // the note's "Last reply" survives the new process
 
   await endTurn($)
   expect(Object.keys(store.lastTurns as object)).toEqual(['s1']) // turns past the interval are dropped

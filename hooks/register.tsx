@@ -35,6 +35,7 @@ const configWarning = atom({ plugin: 'handoff', key: 'configWarning' } as const,
 const lastTurnAt = atom({ plugin: 'handoff', key: 'lastTurnAt' } as const, null)
 // Turn ends by session id, kept across processes: a `claude --resume` starts a new one with no classic.SessionStart.
 const LAST_TURNS = 'lastTurns'
+const storedTurns = async ($: EngineInterface) => ((await $.store.get(LAST_TURNS)) ?? {}) as Record<string, number>
 
 type Timer = { cancel: () => void }
 type Settings = { isOn: boolean; count: number; intervalMs: number; usageStop: number; warn: number; autoGen: number }
@@ -69,6 +70,11 @@ const idleFrom = async ($: EngineInterface, s: Settings, c: Cycle, waitMs: numbe
   const next: Cycle = { ...c, phase: 'idle', dueAt: (await $.clock.now()) + waitMs, isRetry }
   await save($, next)
   await schedule($, s, next)
+}
+
+// 6: a resumed session keeps its cache only within the interval; time the cycle from its last response.
+const resumeFrom = async ($: EngineInterface, s: Settings, sinceMs: number) => {
+  if (s.isOn && sinceMs < s.intervalMs) await idleFrom($, s, { phase: 'off', kept: 0, dueAt: 0, isRetry: false, note: '' }, s.intervalMs - sinceMs, false)
 }
 
 // A thrown step is a failed keep: retry once, then stop.
@@ -394,10 +400,12 @@ export const register: Register = (on, options) => {
     const c = await read($, cycle)
     if (c?.phase === 'idle') await schedule($, s, c)
     if (c?.phase === 'keeping') await idleFrom($, s, c, 0, c.isRetry)
-    if (c === null && s.isOn) {
-      const at = ((await $.store.get(LAST_TURNS)) as Record<string, number> | undefined)?.[await $.session.id()]
-      const sinceMs = at === undefined ? Infinity : (await $.clock.now()) - at
-      if (sinceMs < s.intervalMs) await idleFrom($, s, { phase: 'off', kept: 0, dueAt: 0, isRetry: false, note: '' }, s.intervalMs - sinceMs, false)
+    if (c === null) {
+      const at = (await storedTurns($).catch(() => ({}) as Record<string, number>))[await $.session.id()]
+      if (at !== undefined) {
+        await update($, lastTurnAt, () => at)
+        await resumeFrom($, s, (await $.clock.now()) - at)
+      }
     }
     const note = await read($, handoff)
     if (note?.status === 'waiting') agentTimer = $.clock.after(0, () => void waitForAgents($))
@@ -430,12 +438,9 @@ export const register: Register = (on, options) => {
     return result
   }).catch(($, e, next) => next(e)) // never block a compact
 
-  // 6: a resumed session keeps its cache only within the TTL; time the cycle from its last response.
+  // A resume within this process: no session.start, but the settings hook's input says how long ago.
   on('classic.SessionStart', async ($, e, next) => {
-    if (e.source === 'resume' && s.isOn && e.prompt_cache_likely_expired === false) {
-      const sinceMs = (e.seconds_since_last_response ?? 0) * 1000
-      await idleFrom($, s, { phase: 'off', kept: 0, dueAt: 0, isRetry: false, note: '' }, Math.max(0, s.intervalMs - sinceMs), false)
-    }
+    if (e.source === 'resume' && e.seconds_since_last_response !== undefined) await resumeFrom($, s, e.seconds_since_last_response * 1000)
     return next(e)
   }).catch(($, e, next) => next(e))
 
@@ -458,9 +463,11 @@ export const register: Register = (on, options) => {
     if (e.agentId !== undefined) return result
     const endedAt = await $.clock.now()
     await update($, lastTurnAt, () => endedAt)
-    const turns = ((await $.store.get(LAST_TURNS)) ?? {}) as Record<string, number>
-    const kept = Object.entries(turns).filter(([, at]) => endedAt - at < s.intervalMs)
-    await $.store.set(LAST_TURNS, { ...Object.fromEntries(kept), [await $.session.id()]: endedAt })
+    // A broken store only costs the next resume its keep-alive, never this turn's.
+    await (async () => {
+      const kept = Object.entries(await storedTurns($)).filter(([, at]) => endedAt - at < s.intervalMs)
+      await $.store.set(LAST_TURNS, { ...Object.fromEntries(kept), [await $.session.id()]: endedAt })
+    })().catch(() => undefined)
 
     const note = await read($, handoff)
     const isShowing = note !== null && note.isShown
